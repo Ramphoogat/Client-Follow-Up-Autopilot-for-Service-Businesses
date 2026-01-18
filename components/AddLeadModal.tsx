@@ -1,8 +1,8 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { X, Save, AlertCircle } from 'lucide-react';
+import { X, Save, AlertCircle, Check } from 'lucide-react';
 import { useStore } from '../store';
 import { LeadStatus, LeadPriority } from '../types';
 
@@ -11,7 +11,6 @@ const leadSchema = z.object({
   phone: z.string().min(10, "Phone number is too short"),
   email: z.string().email("Invalid email address"),
   service: z.string().min(2, "Service is required"),
-  priority: z.nativeEnum(LeadPriority),
   source: z.string().min(2, "Source is required"),
   value: z.number().min(0, "Value must be positive").optional(),
 });
@@ -25,7 +24,8 @@ const AddLeadModal: React.FC = () => {
     addLead, 
     updateLead,
     editingLeadId,
-    leads 
+    leads,
+    availableTags
   } = useStore();
   
   const { 
@@ -37,10 +37,11 @@ const AddLeadModal: React.FC = () => {
   } = useForm<LeadFormData>({
     resolver: zodResolver(leadSchema),
     defaultValues: {
-      priority: LeadPriority.WARM,
       value: 0
     }
   });
+
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
   // Pre-fill form if editing
   useEffect(() => {
@@ -51,13 +52,12 @@ const AddLeadModal: React.FC = () => {
         setValue('phone', leadToEdit.phone);
         setValue('email', leadToEdit.email);
         setValue('service', leadToEdit.service);
-        setValue('priority', leadToEdit.priority);
         setValue('source', leadToEdit.source);
         setValue('value', leadToEdit.value);
+        setSelectedTags(leadToEdit.tags || []);
       }
     } else if (isAddLeadModalOpen && !editingLeadId) {
       reset({
-        priority: LeadPriority.WARM,
         value: 0,
         name: '',
         phone: '',
@@ -65,8 +65,17 @@ const AddLeadModal: React.FC = () => {
         service: '',
         source: ''
       });
+      setSelectedTags([]);
     }
   }, [isAddLeadModalOpen, editingLeadId, leads, setValue, reset]);
+
+  const toggleTag = (tagId: string) => {
+    setSelectedTags(prev => 
+        prev.includes(tagId) 
+        ? prev.filter(t => t !== tagId) 
+        : [...prev, tagId]
+    );
+  };
 
   if (!isAddLeadModalOpen) return null;
 
@@ -75,6 +84,7 @@ const AddLeadModal: React.FC = () => {
       // Edit Mode
       updateLead(editingLeadId, {
         ...data,
+        tags: selectedTags,
         value: data.value || 0
       });
     } else {
@@ -83,6 +93,9 @@ const AddLeadModal: React.FC = () => {
         id: Math.random().toString(36).substr(2, 9),
         ...data,
         status: LeadStatus.NEW,
+        // Legacy priority fallback to first tag or Warm
+        priority: LeadPriority.WARM,
+        tags: selectedTags,
         assignedTo: 'Dr. Sharma',
         createdAt: 'Just now',
         lastActivity: 'Manually added',
@@ -147,8 +160,7 @@ const AddLeadModal: React.FC = () => {
              {errors.email && <p className="text-red-500 text-xs flex items-center gap-1"><AlertCircle size={10}/> {errors.email.message}</p>}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1">
+          <div className="space-y-1">
               <label className="text-xs font-semibold text-textSub dark:text-gray-400 uppercase">Service Interest</label>
               <select 
                 {...register('service')}
@@ -163,19 +175,36 @@ const AddLeadModal: React.FC = () => {
                 <option value="Car Detailing">Car Detailing</option>
               </select>
                {errors.service && <p className="text-red-500 text-xs flex items-center gap-1"><AlertCircle size={10}/> {errors.service.message}</p>}
-            </div>
+          </div>
 
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-textSub dark:text-gray-400 uppercase">Priority</label>
-              <select 
-                {...register('priority')}
-                className="w-full p-2.5 rounded-lg border border-gray-200 dark:border-gray-700 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 bg-white dark:bg-gray-800 text-textMain dark:text-white"
-              >
-                <option value={LeadPriority.HOT}>Hot</option>
-                <option value={LeadPriority.WARM}>Warm</option>
-                <option value={LeadPriority.COLD}>Cold</option>
-              </select>
-            </div>
+          {/* Tag Selection */}
+          <div className="space-y-2">
+              <label className="text-xs font-semibold text-textSub dark:text-gray-400 uppercase">Tags</label>
+              <div className="flex flex-wrap gap-2">
+                 {availableTags.map(tag => {
+                     const isSelected = selectedTags.includes(tag.id);
+                     return (
+                        <button
+                            type="button"
+                            key={tag.id}
+                            onClick={() => toggleTag(tag.id)}
+                            className={`
+                                px-3 py-1.5 rounded-full text-xs font-bold transition-all border
+                                ${isSelected 
+                                    ? `bg-gray-900 text-white dark:bg-white dark:text-gray-900 border-transparent` 
+                                    : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-gray-400'
+                                }
+                            `}
+                        >
+                            <div className="flex items-center gap-1.5">
+                                <div className={`w-2 h-2 rounded-full ${tag.color}`} />
+                                {tag.name}
+                                {isSelected && <Check size={12} />}
+                            </div>
+                        </button>
+                     );
+                 })}
+              </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">

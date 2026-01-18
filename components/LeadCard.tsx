@@ -12,34 +12,15 @@ interface LeadCardProps {
 }
 
 const LeadCard: React.FC<LeadCardProps> = ({ lead, compact = false, style, ...props }) => {
-  const { setSelectedLeadId, setActiveWhiteboardLeadId } = useStore();
+  const { setSelectedLeadId, setActiveWhiteboardLeadId, availableTags } = useStore();
   const cardRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ x: 0, y: 0 });
 
-  const getPriorityBadge = (p: LeadPriority) => {
-    switch (p) {
-      case LeadPriority.HOT: 
-        return (
-          <span className="relative inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-xs font-bold border border-red-200 dark:border-red-900/50">
-             <span className="absolute inset-0 rounded-full bg-red-400 animate-ping-slow opacity-20"></span>
-             <Flame size={10} className="relative z-10" />
-             <span className="relative z-10">{p}</span>
-          </span>
-        );
-      case LeadPriority.WARM: 
-        return (
-          <span className="px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-900/50 text-xs font-medium">
-             {p}
-          </span>
-        );
-      default: 
-        return (
-          <span className="px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 text-xs font-medium">
-             {p}
-          </span>
-        );
-    }
+  const getTags = () => {
+    return lead.tags.map(tagId => availableTags.find(t => t.id === tagId)).filter(Boolean);
   };
+
+  const tags = getTags();
 
   const handleMouseMove = (e: React.MouseEvent) => {
     // Only apply magnetic effect on desktop and if not dragging
@@ -100,7 +81,23 @@ const LeadCard: React.FC<LeadCardProps> = ({ lead, compact = false, style, ...pr
       )}
 
       <div className="flex justify-between items-start mb-3 relative z-10">
-        {getPriorityBadge(lead.priority)}
+        <div className="flex flex-wrap gap-1 max-w-[70%]">
+          {tags.length > 0 ? (
+            tags.slice(0, 2).map((tag, i) => (
+                <span key={i} className={`relative inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold text-white ${tag?.color || 'bg-gray-500'}`}>
+                    {tag?.name === 'Hot' && <Flame size={10} className="relative z-10" />}
+                    <span className="relative z-10">{tag?.name}</span>
+                </span>
+            ))
+          ) : (
+             <span className="px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 text-xs font-medium">
+               No Tags
+             </span>
+          )}
+          {tags.length > 2 && (
+             <span className="px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 text-[10px] font-medium">+{tags.length - 2}</span>
+          )}
+        </div>
         <span className="text-[10px] text-textSub dark:text-gray-500 flex items-center gap-1 font-medium bg-gray-50 dark:bg-white/5 px-2 py-1 rounded-md">
           <Clock size={10} /> {lead.createdAt}
         </span>

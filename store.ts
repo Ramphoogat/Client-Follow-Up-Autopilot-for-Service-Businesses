@@ -1,11 +1,19 @@
 import { create } from 'zustand';
 import { MOCK_LEADS, MOCK_SEQUENCES } from './constants';
-import { Lead, Sequence, SequenceStep, CalendarActivity, WhiteboardCard } from './types';
+import { Lead, Sequence, SequenceStep, CalendarActivity, WhiteboardCard, Tag, ViewState, LeadPriority } from './types';
 import { arrayMove } from '@dnd-kit/sortable';
 
 interface AppState {
+  // Navigation
+  currentView: ViewState;
+  setCurrentView: (view: ViewState) => void;
+
+  // Data
   leads: Lead[];
   sequences: Sequence[];
+  availableTags: Tag[];
+  
+  // UI State
   searchQuery: string;
   isAddLeadModalOpen: boolean;
   selectedLeadId: string | null;
@@ -18,6 +26,10 @@ interface AppState {
   // Whiteboard State
   whiteboards: Record<string, WhiteboardCard[]>;
   activeWhiteboardLeadId: string | null;
+
+  // Tag Actions
+  addTag: (tag: Tag) => void;
+  deleteTag: (id: string) => void;
 
   // Lead Actions
   addLead: (lead: Lead) => void;
@@ -45,6 +57,28 @@ interface AppState {
   setActiveWhiteboardLeadId: (id: string | null) => void;
   setWhiteboardCards: (leadId: string, cards: WhiteboardCard[]) => void;
 }
+
+// Initial Default Tags
+const DEFAULT_TAGS: Tag[] = [
+  { id: 'tag-hot', name: 'Hot', color: 'bg-red-500' },
+  { id: 'tag-warm', name: 'Warm', color: 'bg-orange-400' },
+  { id: 'tag-cold', name: 'Cold', color: 'bg-blue-400' },
+  { id: 'tag-vip', name: 'VIP', color: 'bg-purple-500' },
+  { id: 'tag-urgent', name: 'Urgent', color: 'bg-pink-600' }
+];
+
+// Helper to migrate mock leads to have tags based on priority
+const migrateMockLeads = (leads: Lead[]) => {
+  return leads.map(l => {
+    const tags = [];
+    if (l.priority === LeadPriority.HOT) tags.push('tag-hot');
+    if (l.priority === LeadPriority.WARM) tags.push('tag-warm');
+    if (l.priority === LeadPriority.COLD) tags.push('tag-cold');
+    // Randomly add other tags for demo
+    if (Math.random() > 0.7) tags.push('tag-vip');
+    return { ...l, tags };
+  });
+};
 
 // Generate some mock activities based on mock leads
 const generateMockActivities = (): CalendarActivity[] => {
@@ -77,7 +111,11 @@ const generateMockActivities = (): CalendarActivity[] => {
 };
 
 export const useStore = create<AppState>((set, get) => ({
-  leads: MOCK_LEADS,
+  currentView: ViewState.DASHBOARD,
+  setCurrentView: (view) => set({ currentView: view }),
+  
+  availableTags: DEFAULT_TAGS,
+  leads: migrateMockLeads(MOCK_LEADS),
   sequences: MOCK_SEQUENCES,
   activities: generateMockActivities(),
   whiteboards: {},
@@ -87,6 +125,16 @@ export const useStore = create<AppState>((set, get) => ({
   selectedLeadId: null,
   editingLeadId: null,
   theme: 'light',
+
+  addTag: (tag) => set((state) => ({ availableTags: [...state.availableTags, tag] })),
+  deleteTag: (id) => set((state) => ({ 
+    availableTags: state.availableTags.filter(t => t.id !== id),
+    // Also remove this tag from all leads
+    leads: state.leads.map(l => ({
+      ...l,
+      tags: l.tags.filter(tId => tId !== id)
+    }))
+  })),
 
   addLead: (lead) => {
     set((state) => ({ 

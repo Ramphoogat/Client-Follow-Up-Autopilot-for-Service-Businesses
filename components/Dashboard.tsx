@@ -31,7 +31,7 @@ import {
   getMonth
 } from 'date-fns';
 import { useStore } from '../store';
-import { LeadPriority, LeadStatus, StatCardProps, Lead } from '../types';
+import { LeadPriority, LeadStatus, StatCardProps, Lead, ViewState } from '../types';
 import LeadCard from './LeadCard';
 
 const AnimatedNumber: React.FC<{ value: number | string }> = ({ value }) => {
@@ -189,7 +189,7 @@ const parseLeadDate = (dateStr: string): Date => {
 };
 
 const Dashboard: React.FC = () => {
-  const { leads, setAddLeadModalOpen, setEditingLeadId, theme, importLeads } = useStore();
+  const { leads, setAddLeadModalOpen, setEditingLeadId, theme, importLeads, setCurrentView, availableTags } = useStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
@@ -197,7 +197,17 @@ const Dashboard: React.FC = () => {
   // Chart State
   const [timeRange, setTimeRange] = useState<'Last 7 Days' | 'This Month' | 'This Year'>('Last 7 Days');
 
-  const hotLeads = leads.filter(l => l.priority === LeadPriority.HOT && l.status !== LeadStatus.WON);
+  // Filter for "Hot" leads or any lead with a tag that has "Hot" or "Urgent" in name
+  const hotLeads = leads.filter(l => {
+    // Check if any of the lead's tags corresponds to a 'Hot' or 'Urgent' tag definition
+    const hasHotTag = l.tags.some(tagId => {
+      const tagDef = availableTags.find(t => t.id === tagId);
+      return tagDef && (tagDef.name.toLowerCase().includes('hot') || tagDef.name.toLowerCase().includes('urgent'));
+    });
+    
+    return hasHotTag && l.status !== LeadStatus.WON;
+  });
+
   const leadsWon = leads.filter(l => l.status === LeadStatus.WON).length;
   const newLeadsCount = leads.filter(l => l.status === LeadStatus.NEW).length;
   const conversionRate = Math.round((leadsWon / (leads.length || 1)) * 100);
@@ -324,6 +334,7 @@ const Dashboard: React.FC = () => {
                 service: getCol('service') || 'General Inquiry',
                 status: (getCol('status') as LeadStatus) || LeadStatus.NEW,
                 priority: (getCol('priority') as LeadPriority) || LeadPriority.WARM,
+                tags: [],
                 value: parseInt(getCol('value') || '0'),
                 source: getCol('source') || 'CSV Import',
                 assignedTo: getCol('assigned') || 'Unassigned',
@@ -340,6 +351,7 @@ const Dashboard: React.FC = () => {
                 service: cols[3] || 'General Inquiry',
                 status: (cols[4] as LeadStatus) || LeadStatus.NEW,
                 priority: (cols[5] as LeadPriority) || LeadPriority.WARM,
+                tags: [],
                 value: parseInt(cols[6]) || 0,
                 source: cols[7] || 'CSV Import',
                 assignedTo: 'Unassigned',
@@ -574,14 +586,23 @@ const Dashboard: React.FC = () => {
                </span>
                <h2 className="text-xl font-bold text-textMain dark:text-white">Action Required</h2>
             </div>
-            <button className="text-xs font-bold text-primaryDark dark:text-green-400 hover:text-primary dark:hover:text-green-300 hover:translate-x-1 transition-all flex items-center gap-1">
+            <button 
+              onClick={() => setCurrentView(ViewState.PIPELINE)}
+              className="text-xs font-bold text-primaryDark dark:text-green-400 hover:text-primary dark:hover:text-green-300 hover:translate-x-1 transition-all flex items-center gap-1"
+            >
               View All <ArrowRight size={12} />
             </button>
           </div>
           <div className="space-y-4">
-            {hotLeads.map(lead => (
-              <LeadCard key={lead.id} lead={lead} />
-            ))}
+            {hotLeads.length === 0 ? (
+                <div className="bg-white/40 dark:bg-white/5 rounded-xl p-6 text-center border border-dashed border-gray-300 dark:border-gray-700">
+                    <p className="text-sm text-gray-500 dark:text-gray-400">No urgent actions pending.</p>
+                </div>
+            ) : (
+                hotLeads.slice(0, 3).map(lead => (
+                <LeadCard key={lead.id} lead={lead} />
+                ))
+            )}
           </div>
         </div>
       </div>

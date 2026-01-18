@@ -9,6 +9,7 @@ export enum LeadStatus {
   LOST = 'Lost'
 }
 
+// Deprecated in favor of dynamic tags, kept for backward compatibility if needed
 export enum LeadPriority {
   HOT = 'Hot',
   WARM = 'Warm',
@@ -24,6 +25,12 @@ export enum ViewState {
   SETTINGS = 'Settings'
 }
 
+export interface Tag {
+  id: string;
+  name: string;
+  color: string; // Tailwind class or Hex
+}
+
 export interface Lead {
   id: string;
   name: string;
@@ -31,7 +38,8 @@ export interface Lead {
   email: string;
   service: string;
   status: LeadStatus;
-  priority: LeadPriority;
+  priority: LeadPriority; // Kept for legacy sort, but UI will focus on tags
+  tags: string[]; // Array of Tag IDs
   assignedTo: string; // URL to avatar or name
   assignedSequenceId?: string;
   source: string;

@@ -49,9 +49,8 @@ const MeshBackground = () => (
 );
 
 const App: React.FC = () => {
-  const [currentView, setCurrentView] = useState<ViewState>(ViewState.DASHBOARD);
+  const { currentView, setCurrentView, theme, toggleTheme } = useStore();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const { theme, toggleTheme } = useStore();
 
   const navItems = [
     { id: ViewState.DASHBOARD, label: 'Dashboard', icon: LayoutDashboard },
