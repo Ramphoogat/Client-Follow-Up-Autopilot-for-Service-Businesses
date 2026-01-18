@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { 
   Users, 
   TrendingUp, 
@@ -6,23 +6,33 @@ import {
   Clock, 
   ArrowRight,
   Upload,
-  Loader2
+  Loader2,
+  Info,
+  X,
+  FileText
 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid } from 'recharts';
 import { useInView } from 'react-intersection-observer';
+import { 
+  format, 
+  subDays, 
+  startOfMonth, 
+  endOfMonth, 
+  startOfYear, 
+  endOfYear, 
+  eachDayOfInterval, 
+  eachMonthOfInterval, 
+  isSameDay, 
+  isWithinInterval, 
+  getWeek, 
+  subHours,
+  isValid,
+  parseISO,
+  getMonth
+} from 'date-fns';
 import { useStore } from '../store';
 import { LeadPriority, LeadStatus, StatCardProps, Lead } from '../types';
 import LeadCard from './LeadCard';
-
-const data = [
-  { name: 'Mon', leads: 4 },
-  { name: 'Tue', leads: 7 },
-  { name: 'Wed', leads: 5 },
-  { name: 'Thu', leads: 12 },
-  { name: 'Fri', leads: 9 },
-  { name: 'Sat', leads: 15 },
-  { name: 'Sun', leads: 6 },
-];
 
 const AnimatedNumber: React.FC<{ value: number | string }> = ({ value }) => {
   const [displayValue, setDisplayValue] = useState(0);
@@ -148,16 +158,100 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, trend, trendUp, icon:
   );
 };
 
+// Helper to parse lead dates (handles mock relative strings and real ISO strings)
+const parseLeadDate = (dateStr: string): Date => {
+  const now = new Date();
+  
+  // Try parsing as ISO first
+  const parsed = parseISO(dateStr);
+  if (isValid(parsed) && dateStr.includes('-')) {
+    return parsed;
+  }
+
+  // Handle mock relative strings
+  const str = dateStr.toLowerCase();
+  if (str.includes('min')) return subHours(now, 0.1);
+  if (str.includes('hour')) {
+     const hours = parseInt(str) || 1;
+     return subHours(now, hours);
+  }
+  if (str.includes('day')) {
+     const days = parseInt(str) || 1;
+     return subDays(now, days);
+  }
+  if (str.includes('week')) {
+    const weeks = parseInt(str) || 1;
+    return subDays(now, weeks * 7);
+  }
+  if (str.includes('just now')) return now;
+
+  return now; // Default fallback
+};
+
 const Dashboard: React.FC = () => {
   const { leads, setAddLeadModalOpen, setEditingLeadId, theme, importLeads } = useStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  
+  // Chart State
+  const [timeRange, setTimeRange] = useState<'Last 7 Days' | 'This Month' | 'This Year'>('Last 7 Days');
 
   const hotLeads = leads.filter(l => l.priority === LeadPriority.HOT && l.status !== LeadStatus.WON);
   const leadsWon = leads.filter(l => l.status === LeadStatus.WON).length;
   const newLeadsCount = leads.filter(l => l.status === LeadStatus.NEW).length;
-  
   const conversionRate = Math.round((leadsWon / (leads.length || 1)) * 100);
+
+  // --- Dynamic Chart Data Calculation ---
+  const chartData = useMemo(() => {
+    const now = new Date();
+    
+    if (timeRange === 'Last 7 Days') {
+      const days = eachDayOfInterval({ start: subDays(now, 6), end: now });
+      return days.map(day => {
+        const count = leads.filter(l => isSameDay(parseLeadDate(l.createdAt), day)).length;
+        return { name: format(day, 'EEE'), leads: count };
+      });
+    }
+
+    if (timeRange === 'This Month') {
+       // Group by Weeks (Week 1, Week 2...)
+       const start = startOfMonth(now);
+       const end = endOfMonth(now);
+       const days = eachDayOfInterval({ start, end });
+       
+       const weeksMap: Record<string, number> = {};
+       days.forEach(day => {
+         const weekNum = getWeek(day) - getWeek(start) + 1;
+         const key = `Week ${weekNum}`;
+         if (!weeksMap[key]) weeksMap[key] = 0;
+       });
+
+       leads.forEach(l => {
+         const date = parseLeadDate(l.createdAt);
+         if (isWithinInterval(date, { start, end })) {
+           const weekNum = getWeek(date) - getWeek(start) + 1;
+           const key = `Week ${weekNum}`;
+           if (weeksMap[key] !== undefined) weeksMap[key]++;
+         }
+       });
+
+       return Object.keys(weeksMap).map(name => ({ name, leads: weeksMap[name] }));
+    }
+
+    if (timeRange === 'This Year') {
+       const months = eachMonthOfInterval({ start: startOfYear(now), end: endOfYear(now) });
+       return months.map(month => {
+         const count = leads.filter(l => {
+           const d = parseLeadDate(l.createdAt);
+           return getMonth(d) === getMonth(month) && d.getFullYear() === now.getFullYear();
+         }).length;
+         return { name: format(month, 'MMM'), leads: count };
+       });
+    }
+
+    return [];
+  }, [leads, timeRange]);
 
   const handleAddNewLead = () => {
     setEditingLeadId(null);
@@ -180,45 +274,79 @@ const Dashboard: React.FC = () => {
     reader.onload = (event) => {
       try {
         const text = event.target?.result as string;
-        const rows = text.split('\n');
+        const rows = text.split('\n').map(r => r.trim()).filter(r => r);
         
-        // Basic CSV Parser
-        // Assumption: First row is header or if standard columns used, logic adapts
-        // This parser expects a standard format but maps loosely to columns
-        
-        const newLeads: Lead[] = [];
-        
-        // Skip header if it exists (naive check: does first row contain "Name" or "Email"?)
-        let startIndex = 0;
-        if (rows[0].toLowerCase().includes('name') || rows[0].toLowerCase().includes('email')) {
-          startIndex = 1;
+        if (rows.length === 0) {
+            alert("File is empty");
+            setIsImporting(false);
+            return;
         }
 
-        for (let i = startIndex; i < rows.length; i++) {
-          const row = rows[i].trim();
-          if (!row) continue;
-          
-          // Split by comma, handling potential quotes roughly or assuming simple CSV
-          const cols = row.split(',').map(c => c.trim().replace(/^"|"$/g, ''));
-          
-          // Mapping Strategy: Name, Phone, Email, Service, Status, Priority, Value, Source
-          // If columns are fewer, fill with defaults
-          if (cols.length < 3) continue; // Skip invalid rows
+        const firstRow = rows[0].split(',').map(c => c.trim().toLowerCase().replace(/^"|"$/g, ''));
+        const hasHeaders = firstRow.includes('name') || firstRow.includes('email') || firstRow.includes('phone');
+        
+        const newLeads: Lead[] = [];
+        const startIndex = hasHeaders ? 1 : 0;
+        const headers = hasHeaders ? firstRow : [];
 
-          const lead: Lead = {
-            id: `imp-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-            name: cols[0] || 'Unknown Import',
-            phone: cols[1] || '',
-            email: cols[2] || '',
-            service: cols[3] || 'General Inquiry',
-            status: (cols[4] as LeadStatus) || LeadStatus.NEW,
-            priority: (cols[5] as LeadPriority) || LeadPriority.WARM,
-            value: parseInt(cols[6]) || 0,
-            source: cols[7] || 'CSV Import',
-            assignedTo: 'Unassigned',
-            createdAt: 'Just now',
-            lastActivity: 'Imported'
-          };
+        for (let i = startIndex; i < rows.length; i++) {
+          const rowText = rows[i];
+          const cols: string[] = [];
+          let inQuote = false;
+          let currentVal = '';
+          for (let char of rowText) {
+             if (char === '"') {
+                 inQuote = !inQuote;
+             } else if (char === ',' && !inQuote) {
+                 cols.push(currentVal.trim().replace(/^"|"$/g, ''));
+                 currentVal = '';
+             } else {
+                 currentVal += char;
+             }
+          }
+          cols.push(currentVal.trim().replace(/^"|"$/g, ''));
+
+          if (cols.length < 2) continue;
+
+          let lead: Lead;
+
+          if (hasHeaders) {
+              const getCol = (key: string) => {
+                  const idx = headers.findIndex(h => h.includes(key));
+                  return idx !== -1 ? cols[idx] : '';
+              };
+
+              lead = {
+                id: getCol('id') || `imp-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                name: getCol('name') || 'Unknown Import',
+                phone: getCol('phone') || '',
+                email: getCol('email') || '',
+                service: getCol('service') || 'General Inquiry',
+                status: (getCol('status') as LeadStatus) || LeadStatus.NEW,
+                priority: (getCol('priority') as LeadPriority) || LeadPriority.WARM,
+                value: parseInt(getCol('value') || '0'),
+                source: getCol('source') || 'CSV Import',
+                assignedTo: getCol('assigned') || 'Unassigned',
+                assignedSequenceId: getCol('sequence') || undefined,
+                createdAt: getCol('created') || new Date().toISOString(),
+                lastActivity: getCol('activity') || 'Imported'
+              };
+          } else {
+             lead = {
+                id: `imp-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                name: cols[0] || 'Unknown Import',
+                phone: cols[1] || '',
+                email: cols[2] || '',
+                service: cols[3] || 'General Inquiry',
+                status: (cols[4] as LeadStatus) || LeadStatus.NEW,
+                priority: (cols[5] as LeadPriority) || LeadPriority.WARM,
+                value: parseInt(cols[6]) || 0,
+                source: cols[7] || 'CSV Import',
+                assignedTo: 'Unassigned',
+                createdAt: new Date().toISOString(),
+                lastActivity: 'Imported'
+             };
+          }
           
           newLeads.push(lead);
         }
@@ -235,7 +363,6 @@ const Dashboard: React.FC = () => {
         alert('Failed to parse CSV file. Please check the format.');
       } finally {
         setIsImporting(false);
-        // Reset input
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
     };
@@ -254,6 +381,14 @@ const Dashboard: React.FC = () => {
         </div>
         
         <div className="flex items-center gap-3">
+          <button 
+             onClick={() => setIsHelpOpen(true)}
+             className="px-4 py-3 rounded-xl font-bold bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-textSub dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center gap-2 shadow-sm"
+          >
+             <Info size={18} />
+             <span className="hidden md:inline">What you need</span>
+          </button>
+
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -281,6 +416,59 @@ const Dashboard: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* CSV Help Modal */}
+      {isHelpOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+           <div className="bg-white dark:bg-gray-900 rounded-2xl w-full max-w-2xl shadow-2xl border border-gray-100 dark:border-gray-800 overflow-hidden animate-in zoom-in-95 duration-200">
+              <div className="p-6 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50">
+                 <div className="flex items-center gap-3">
+                    <div className="p-2 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg">
+                       <FileText size={20} />
+                    </div>
+                    <h2 className="text-xl font-bold text-textMain dark:text-white">Data Import Guide</h2>
+                 </div>
+                 <button onClick={() => setIsHelpOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-white transition-colors"><X size={24} /></button>
+              </div>
+              <div className="p-6 max-h-[70vh] overflow-y-auto">
+                 <p className="mb-4 text-textSub dark:text-gray-400">
+                    To fully utilize the dashboard capabilities, we recommend uploading a CSV file with a header row containing the following columns:
+                 </p>
+                 
+                 <div className="bg-gray-100 dark:bg-gray-800 p-4 rounded-xl border border-gray-200 dark:border-gray-700 font-mono text-xs md:text-sm text-textMain dark:text-gray-300 overflow-x-auto mb-6 whitespace-nowrap">
+                    Lead ID, Name, Email, Phone, Service, Status, Priority, Value, Source, Assigned To, Sequence, Created At, Last Activity
+                 </div>
+
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <h3 className="font-bold text-textMain dark:text-white mb-3 text-sm uppercase tracking-wide">Essential Fields</h3>
+                        <ul className="space-y-2 text-sm text-textSub dark:text-gray-400">
+                           <li className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 shrink-0" /> <span><strong>Name</strong>: Full name of the lead</span></li>
+                           <li className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 shrink-0" /> <span><strong>Email/Phone</strong>: Contact information</span></li>
+                           <li className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 shrink-0" /> <span><strong>Service</strong>: The product or service interest</span></li>
+                           <li className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 shrink-0" /> <span><strong>Status</strong>: New, Contacted, Engaged, Quoted, Won, Lost</span></li>
+                           <li className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 shrink-0" /> <span><strong>Priority</strong>: Hot, Warm, Cold</span></li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h3 className="font-bold text-textMain dark:text-white mb-3 text-sm uppercase tracking-wide">Optional / System Fields</h3>
+                        <ul className="space-y-2 text-sm text-textSub dark:text-gray-400">
+                           <li className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-700 mt-1.5 shrink-0" /> <span><strong>Lead ID</strong>: Unique identifier (auto-generated if missing)</span></li>
+                           <li className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-700 mt-1.5 shrink-0" /> <span><strong>Value</strong>: Deal value (numeric)</span></li>
+                           <li className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-700 mt-1.5 shrink-0" /> <span><strong>Created At</strong>: ISO Date string (e.g. 2023-01-01)</span></li>
+                           <li className="flex items-start gap-2"><div className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-gray-700 mt-1.5 shrink-0" /> <span><strong>Assigned To</strong>: Name of the owner</span></li>
+                        </ul>
+                    </div>
+                 </div>
+              </div>
+              <div className="p-4 bg-gray-50 dark:bg-gray-800/50 flex justify-end border-t border-gray-100 dark:border-gray-800">
+                 <button onClick={() => setIsHelpOpen(false)} className="px-6 py-2 bg-primary text-gray-900 font-bold rounded-xl hover:bg-primaryDark transition-colors shadow-sm">
+                    Got it
+                 </button>
+              </div>
+           </div>
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -317,18 +505,24 @@ const Dashboard: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Chart */}
+        {/* Dynamic Volume Chart */}
         <div className="lg:col-span-2 bg-white/60 dark:bg-[#0A0A0A]/60 backdrop-blur-xl border border-white/20 dark:border-white/5 p-6 rounded-2xl shadow-xl shadow-orange-500/5 dark:shadow-none transition-all hover:border-primary/20 dark:hover:border-green-500/20">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xl font-bold text-textMain dark:text-white">Lead Volume</h2>
-            <select className="bg-transparent border border-gray-200 dark:border-gray-800 rounded-lg text-xs px-3 py-1.5 text-textSub dark:text-gray-400 outline-none hover:border-primary dark:hover:border-green-500 focus:border-primary dark:focus:border-green-500 transition-colors cursor-pointer dark:bg-black">
-              <option>Last 7 Days</option>
-              <option>This Month</option>
+            <select 
+              className="bg-transparent border border-gray-200 dark:border-gray-800 rounded-lg text-xs px-3 py-1.5 text-textSub dark:text-gray-400 outline-none hover:border-primary dark:hover:border-green-500 focus:border-primary dark:focus:border-green-500 transition-colors cursor-pointer dark:bg-black"
+              value={timeRange}
+              onChange={(e) => setTimeRange(e.target.value as any)}
+            >
+              <option value="Last 7 Days">Last 7 Days</option>
+              <option value="This Month">This Month</option>
+              <option value="This Year">This Year</option>
             </select>
           </div>
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-              <BarChart data={data} barSize={36}>
+              <BarChart data={chartData} barSize={timeRange === 'This Year' ? 24 : 36}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme === 'dark' ? 'rgba(255,255,255,0.05)' : '#f0f0f0'} />
                 <XAxis 
                   dataKey="name" 
                   axisLine={false} 
@@ -336,7 +530,12 @@ const Dashboard: React.FC = () => {
                   tick={{fill: theme === 'dark' ? '#525252' : '#9CA3AF', fontSize: 12, fontWeight: 500}} 
                   dy={10}
                 />
-                <YAxis hide={true} />
+                <YAxis 
+                  hide={false} 
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{fill: theme === 'dark' ? '#525252' : '#9CA3AF', fontSize: 11}}
+                />
                 <Tooltip 
                   cursor={{fill: theme === 'dark' ? 'rgba(255, 255, 255, 0.03)' : 'rgba(249, 250, 251, 0.6)'}}
                   contentStyle={{
@@ -351,11 +550,11 @@ const Dashboard: React.FC = () => {
                   itemStyle={{ color: theme === 'dark' ? '#D1D5DB' : '#374151', fontWeight: 600 }}
                   labelStyle={{ color: theme === 'dark' ? '#6B7280' : '#6B7280', marginBottom: '4px' }}
                 />
-                <Bar dataKey="leads" radius={[8, 8, 8, 8]}>
-                  {data.map((entry, index) => (
+                <Bar dataKey="leads" radius={[4, 4, 4, 4]}>
+                  {chartData.map((entry, index) => (
                     <Cell 
                       key={`cell-${index}`} 
-                      fill={index === 5 ? (theme === 'dark' ? '#4ade80' : '#FFB380') : (theme === 'dark' ? '#262626' : '#E5E7EB')} 
+                      fill={theme === 'dark' ? '#4ade80' : '#FFB380'} 
                       className="transition-all duration-300 hover:opacity-80"
                     />
                   ))}
